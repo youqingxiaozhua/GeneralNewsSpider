@@ -1,76 +1,25 @@
-import datetime
 import re
 import time
 
-import MySQLdb
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from newspaper import Article
 from retrying import retry
 
-import config
-from data_saver import check_update_time, update_data
+from config import url_list
+from data_saver import update_data
 
 
-conn = MySQLdb.connect(**config.db_info)
-
-url_list = {
-    '吉林省': {
-        '长春市': [
-            'http://wjw.changchun.gov.cn/xwzx/tzgg/',  # 长春
-            # 'http://wjw.changchun.gov.cn/xwzx/tzgg/index_1.html',  # 长春
-        ],
-        '吉林市': [
-            'http://wjw.jlcity.gov.cn/gsgg/index.html',  # 吉林市
-            # 'http://wjw.jlcity.gov.cn/gsgg/index_1.html',  # 吉林市
-        ],
-        '四平市': [
-            'http://wjw.siping.gov.cn/zwgk/tzgg/',
-            # 'http://wjw.siping.gov.cn/zwgk/tzgg/index_1.html'
-        ],
-        '辽源市': [
-            'http://wjw.liaoyuan.gov.cn/wzsy/ggl/',
-        ],
-        '通化市': ['http://www.tonghua.gov.cn/wjw/gsgk/'],
-        '松原市': ['http://wsjkw.jlsy.gov.cn/xwzx/hyyw/'],
-        '白山市': ['http://wsjkw.cbs.gov.cn/xwzx/'],
-        '白城市': ['http://wjw.jlbc.gov.cn/zwdt/'],
-    },
-    '辽宁省': {
-        '沈阳市': [
-            # 'http://wjw.shenyang.gov.cn/xxgk/tzgg/glist.html',
-            # 'http://wjw.shenyang.gov.cn/sywsj/xxgk/tzgg/glist1.html',
-            # 'http://wjw.shenyang.gov.cn/sywsj/xxgk/tzgg/glist2.html',
-            # 'http://wjw.shenyang.gov.cn/sywsj/xxgk/tzgg/glist3.html',
-            # 'http://wjw.shenyang.gov.cn/sywsj/xxgk/tzgg/glist4.html'
-        ],
-        # '大连市': ['http://hcod.dl.gov.cn/web/guest/20'],  # TODO:不含日期
-        # '鞍山市': ['http://wjw.anshan.gov.cn/News_list.aspx?Sort_Id=34&Menu_Id=0'],
-        # '抚顺市': ['http://fswjw.fushun.gov.cn/index.php?c=category&id=35'],
-        # '本溪市': ['http://wjw.benxi.gov.cn/xwzx/wsjskx'],
-        # '丹东市': ['http://wsjsw.dandong.gov.cn/wjw/yqfk/'],
-        # '锦州市': ['http://wjw.jz.gov.cn/jzwswindex/tzgglist?id=1316'],
-        # '营口市': ['http://wjw.yingkou.gov.cn/003/about.html', 'http://wjw.yingkou.gov.cn/003/2.html'],
-        # '阜新市': ['http://wsjk.fuxin.gov.cn/fxswsj/gzdt/list.html'],
-        # '辽阳市': ['http://wjw.liaoyang.gov.cn/lywjw/zwdt/tzgg/glist.html'],
-        # '铁岭市': ['http://wjw.tieling.gov.cn/tielingws/tzgg/index.html'],
-        # '盘锦市': ['http://wjw.panjin.gov.cn/col/col1757/index.html'],
-        # '朝阳市': ['http://wjw.zgcy.gov.cn/Cywjj/xwzx/001001/'],
-        # '葫芦岛市': ['http://wsjk.hld.gov.cn/zwgk/tzgg/'],
-    },
-    '黑龙江省': {
-        # '': ['http://wsjkw.hlj.gov.cn/index.php/Home/Zwgk/all/typeid/42'],
-    },
-    '天津市': {
-        # '': ['http://wsjk.tj.gov.cn/col/col87/index.html']
-    }
-
-}
+session = requests.session()
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/52.0.2743.116 Safari/537.36",
 }
+
+
+class Page404Error(FileExistsError):
+    pass
 
 
 @retry(stop_max_attempt_number=6, wait_random_min=10, wait_random_max=30)
@@ -97,10 +46,11 @@ def parse_notice_list(url):
                         break
                 if len(title) == 0:
                     continue
-                detail_url = i.find('a').get('href')
-                detail_url = urljoin(url, detail_url)
-                if not url:
+                try:
+                    detail_url = i.find('a').get('href')
+                except:
                     continue
+                detail_url = urljoin(url, detail_url)
                 create_time = create_time.replace('.', '-')
                 create_time = create_time.replace('/', '-')
                 create_time = create_time.replace('年', '-')
@@ -118,7 +68,7 @@ def parse_notice_list(url):
                     'create_time': create_time,
                     'url': detail_url
                 })
-        if len(filter_list) <= 10:
+        if len(filter_list) <= 6:
             filter_list = []
         return filter_list
 
@@ -148,7 +98,7 @@ def parse_notice_list(url):
                 continue
             filter_list = parse_list(wide_list)
             # ignore notice list if num is less than 5
-            if len(filter_list) >= 10:
+            if len(filter_list) >= 6:
                 break
 
     print(province, city, 'get %s news' % len(filter_list))
@@ -160,7 +110,7 @@ def compare_strs(str1, str2):
         print('old:new', str1, str2)
 
 
-@retry(stop_max_attempt_number=6, wait_random_min=10, wait_random_max=20)
+@retry(stop_max_attempt_number=9, wait_random_min=10, wait_random_max=20)
 def parse_notice_detail(url, title='', create_time=''):
     """
     解析新闻正文
@@ -170,8 +120,12 @@ def parse_notice_detail(url, title='', create_time=''):
     :return: tuple: title, create_time, content, pic_link
     """
     article = Article(url, language='zh')
-    article.download()
-    article.parse()
+    try:
+        article.download()
+        article.parse()
+    except Exception as e:
+        if 'failed with 404' in str(e):
+            raise Page404Error
     parse_time = article.meta_data.get('published', '')
     if len(parse_time) > len(create_time):
         create_time = parse_time
@@ -196,11 +150,11 @@ if __name__ == '__main__':
             for list_url in city_urls:
                 urls = parse_notice_list(list_url)
                 for i in urls:
-                    operate = check_update_time(conn, i['url'])
-                    if operate == 'pass':
-                        print(i['title'], 'updated recently, pass')
-                    else:
+                    try:
                         title, create_time, content, image = parse_notice_detail(i['url'], i['title'], i['create_time'])
-                        update_data(conn, province, city, title, create_time, content, image, i['url'], operate)
+                    except Page404Error:
+                        print(i['url'], '404')
+                        continue
+                    else:
+                        update_data(session, province, city, title, create_time, content, image, i['url'])
                         time.sleep(5)
-    conn.close()
