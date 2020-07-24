@@ -37,6 +37,12 @@ def update_data(session, province, city, title, date_time:str, content, image, l
         time = '00:00:00'
 
     url = '%s/api/add' % API_SERVER
+    if content == '':
+        if image == '':
+            print('Warning: %s content and image are empty' % title)
+        else:
+            content = 'image'
+
     data = {
         'province': province,  # str
         'city': city,  # str
@@ -50,12 +56,17 @@ def update_data(session, province, city, title, date_time:str, content, image, l
         'uploader': UPLOADER,  # 写自己的ID #str
         'key': API_KEY  # 密钥作为验证权限 #str
     }
-    r = session.post(url, data=data)
+    r = session.post(url, data=json.dumps(data))
     if r.status_code != requests.codes.ok:
-        print('save error: ', link)
+        print('server error: ', link)
         print(r.status_code)
         print(json.loads(r.text))
     else:
-        print(title, 'saved')
+        result = json.loads(r.content)
+        if result['code'] == 0:
+            print(title, 'saved')
+        else:
+            print('save error: ', link)
+            print('error msg: ', result['message'])
 
 
